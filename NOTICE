@@ -1,0 +1,52 @@
+OpenOntology
+Copyright 2026 Keyur Joshi
+
+================================================================================
+This repository is open core. Two licences apply, and which one governs a file
+is determined by the directory it lives in.
+================================================================================
+
+Apache License, Version 2.0  —  see LICENSE
+--------------------------------------------------------------------------------
+Everything not listed under the Business Source License below, including:
+
+  services/resolution-engine/     the Go ontology resolution engine, its graph
+                                  tier, its idempotency filter and the graph
+                                  CRDT replication core
+  services/command-worker/        the Kafka closure loop
+  services/operator-console/      the read-only operator surface
+  ops/                            Neo4j revisions, Prometheus and Grafana
+                                  provisioning
+  tools/                          the telemetry simulator and quota probe
+  schemas/                        the published payload contracts
+  docs/                           documentation
+  docker-compose.yml, Makefile, .github/
+
+You may run, modify, fork and redistribute all of the above, including in
+production and including as a hosted service, subject only to Apache-2.0.
+
+Business Source License 1.1  —  see LICENSE-BUSL-1.1
+--------------------------------------------------------------------------------
+  services/ai-interceptor/        the licensed AI-agent interceptor
+  services/graphrag-interceptor/  the semantic GraphRAG two-agent layer
+
+These convert an enriched mutation into a validated command sequence under a
+subscription. You may read, modify and self-host them, including in production,
+under the Additional Use Grant in LICENSE-BUSL-1.1. What the grant withholds is
+offering them to third parties as a hosted or managed service. On the Change
+Date (2030-08-13) they convert to Apache-2.0.
+
+Where the seam is
+--------------------------------------------------------------------------------
+The boundary is a network boundary, not a build flag. The Apache-2.0 half never
+imports the BUSL half; it reaches it over HTTP and degrades without it. See
+docs/OPEN-CORE.md for the specific enforcement points in code.
+
+================================================================================
+Third-party components
+================================================================================
+This product includes software developed by third parties, distributed under
+their own licences. Container images pulled by docker-compose.yml (Apache Kafka,
+ZooKeeper, Redis, Neo4j Community Edition, Prometheus, Grafana) and the Go and
+Python dependencies declared in go.mod and requirements*.txt remain governed by
+their respective licences; neither LICENSE nor LICENSE-BUSL-1.1 alters them.

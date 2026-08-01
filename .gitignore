@@ -1,0 +1,34 @@
+# Local environment
+.env
+.env.local
+.env.*.local
+
+# Go
+/services/resolution-engine/resolver
+/services/resolution-engine/bin/
+*.test
+*.out
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Runtime state written by the observability stack. The interceptor runs four
+# uvicorn workers, so prometheus_client needs a shared multiprocess directory;
+# it is scratch space rebuilt on every boot, never a source artifact.
+/prometheus_multiproc/
+/ops/grafana/data/
+/ops/prometheus/data/
+*.log
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
