@@ -1,0 +1,22 @@
+# Runtime dependencies for the commercial AI-agent interceptor.
+fastapi>=0.115,<0.117
+uvicorn[standard]>=0.32,<0.36
+pydantic>=2.9,<3
+pydantic-settings>=2.5,<3
+
+# Shared quota and idempotency state. Required whenever the service runs more
+# than one uvicorn worker or more than one replica; the in-process fallbacks
+# are correct for a single worker only.
+redis>=5.1,<7
+
+# Prometheus exposition. Multiprocess mode is what makes the counters correct
+# under the image's four uvicorn workers — see app/metrics.py and the
+# PROMETHEUS_MULTIPROC_DIR handling in the entrypoint.
+prometheus-client>=0.21,<1
+
+# The provider SDK, required only when OO_LLM_PROVIDER=cloud. It is the single
+# vendor dependency in this service and app/llm_cloud.py is the single module
+# that imports it, so pointing the service at a different tool-calling provider
+# is a matter of swapping this line and that file. The default mock provider
+# needs neither: no network access, no key, no SDK.
+# anthropic>=0.49,<1
