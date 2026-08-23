@@ -1,0 +1,15 @@
+# Runtime dependencies for the semantic GraphRAG interceptor.
+fastapi>=0.115,<0.117
+uvicorn[standard]>=0.32,<0.36
+pydantic>=2.9,<3
+pydantic-settings>=2.5,<3
+
+# Prometheus exposition. One process, so the default in-process registry is
+# correct — unlike the standard interceptor's four uvicorn workers.
+prometheus-client>=0.21,<1
+
+# The provider SDK, required only when OO_GRAPHRAG_AGENT_PROVIDER=cloud. It is
+# the single vendor dependency here and CloudToolClient is the single class that
+# imports it. The deterministic default needs no network access and no SDK
+# install, so the whole two-agent loop runs offline.
+# anthropic>=0.49,<1
