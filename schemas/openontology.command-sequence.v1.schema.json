@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openontology.dev/schemas/openontology.command-sequence.v1.schema.json",
+  "$defs": {
+    "ActionType": {
+      "enum": [
+        "ISOLATE",
+        "SHUTDOWN",
+        "THROTTLE",
+        "INSPECT",
+        "SCHEDULE_MAINTENANCE",
+        "NOTIFY",
+        "ACKNOWLEDGE"
+      ],
+      "title": "ActionType",
+      "type": "string"
+    },
+    "Command": {
+      "additionalProperties": false,
+      "description": "One executable instruction in the remediation sequence.",
+      "properties": {
+        "sequence": {
+          "description": "1-based execution order.",
+          "minimum": 1,
+          "title": "Sequence",
+          "type": "integer"
+        },
+        "target_component": {
+          "description": "Component or subsystem to act on.",
+          "minLength": 1,
+          "title": "Target Component",
+          "type": "string"
+        },
+        "action": {
+          "$ref": "#/$defs/ActionType"
+        },
+        "priority": {
+          "$ref": "#/$defs/Priority"
+        },
+        "assigned_to": {
+          "description": "Human-readable assignee.",
+          "minLength": 1,
+          "title": "Assigned To",
+          "type": "string"
+        },
+        "assigned_operator_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Graph operator id, when a named operator exists.",
+          "title": "Assigned Operator Id"
+        },
+        "parameters": {
+          "additionalProperties": true,
+          "title": "Parameters",
+          "type": "object"
+        },
+        "expected_effect": {
+          "minLength": 1,
+          "title": "Expected Effect",
+          "type": "string"
+        },
+        "rollback": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Rollback"
+        },
+        "deadline_seconds": {
+          "default": 900,
+          "maximum": 604800,
+          "minimum": 0,
+          "title": "Deadline Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "sequence",
+        "target_component",
+        "action",
+        "priority",
+        "assigned_to",
+        "expected_effect"
+      ],
+      "title": "Command",
+      "type": "object"
+    },
+    "Escalation": {
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "title": "Required",
+          "type": "boolean"
+        },
+        "notify": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Notify",
+          "type": "array"
+        },
+        "reason": {
+          "default": "",
+          "title": "Reason",
+          "type": "string"
+        },
+        "sla_seconds": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Sla Seconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "required"
+      ],
+      "title": "Escalation",
+      "type": "object"
+    },
+    "Priority": {
+      "enum": [
+        "CRITICAL",
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+      ],
+      "title": "Priority",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "INFO",
+        "HIGH",
+        "CRITICAL"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "TokenUsage": {
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": {
+          "default": 0,
+          "title": "Input Tokens",
+          "type": "integer"
+        },
+        "output_tokens": {
+          "default": 0,
+          "title": "Output Tokens",
+          "type": "integer"
+        }
+      },
+      "title": "TokenUsage",
+      "type": "object"
+    },
+    "Transition": {
+      "enum": [
+        "RAISED",
+        "ESCALATED",
+        "SUSTAINED",
+        "CLEARED"
+      ],
+      "title": "Transition",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "description": "Returned by POST /v1/intercept and republished by the command worker to the ontology.commands topic. Fields the server owns \u2014 plan_id, model, usage, latency \u2014 are set by the service and cannot be asserted by the model that produced the commands.",
+  "properties": {
+    "plan_id": {
+      "title": "Plan Id",
+      "type": "string"
+    },
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "asset_id": {
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "tenant": {
+      "title": "Tenant",
+      "type": "string"
+    },
+    "generated_at": {
+      "format": "date-time",
+      "title": "Generated At",
+      "type": "string"
+    },
+    "model": {
+      "title": "Model",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "openontology.command-sequence.v1",
+      "default": "openontology.command-sequence.v1",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "severity": {
+      "$ref": "#/$defs/Severity"
+    },
+    "transition": {
+      "$ref": "#/$defs/Transition"
+    },
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "reasoning_summary": {
+      "title": "Reasoning Summary",
+      "type": "string"
+    },
+    "commands": {
+      "items": {
+        "$ref": "#/$defs/Command"
+      },
+      "title": "Commands",
+      "type": "array"
+    },
+    "escalation": {
+      "$ref": "#/$defs/Escalation"
+    },
+    "evidence": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Evidence",
+      "type": "array"
+    },
+    "context_degraded": {
+      "default": false,
+      "title": "Context Degraded",
+      "type": "boolean"
+    },
+    "latency_ms": {
+      "default": 0.0,
+      "title": "Latency Ms",
+      "type": "number"
+    },
+    "usage": {
+      "$ref": "#/$defs/TokenUsage"
+    }
+  },
+  "required": [
+    "plan_id",
+    "event_id",
+    "asset_id",
+    "tenant",
+    "model",
+    "severity",
+    "transition",
+    "confidence",
+    "reasoning_summary",
+    "commands",
+    "escalation"
+  ],
+  "title": "Actionable Command Sequence",
+  "type": "object"
+}

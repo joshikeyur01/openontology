@@ -1,0 +1,571 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://openontology.dev/schemas/openontology.mutation.v2.schema.json",
+  "$defs": {
+    "FlowRef": {
+      "description": "One asset in the process flow around the target.\n\n``hops`` separates an immediate consequence from a knock-on one: the\nexchanger a pump feeds directly is one hop, the cooler three stages further\non is three. A containment decision reads that number.",
+      "properties": {
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "name": {
+          "default": "",
+          "title": "Name",
+          "type": "string"
+        },
+        "model_number": {
+          "default": "",
+          "title": "Model Number",
+          "type": "string"
+        },
+        "status": {
+          "default": "",
+          "title": "Status",
+          "type": "string"
+        },
+        "relation": {
+          "default": "IMPACTS",
+          "enum": [
+            "SUPPLIES",
+            "IMPACTS"
+          ],
+          "title": "Relation",
+          "type": "string"
+        },
+        "hops": {
+          "default": 1,
+          "title": "Hops",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "asset_id"
+      ],
+      "title": "FlowRef",
+      "type": "object"
+    },
+    "OntologyContext": {
+      "properties": {
+        "asset_id": {
+          "title": "Asset Id",
+          "type": "string"
+        },
+        "asset_name": {
+          "default": "",
+          "title": "Asset Name",
+          "type": "string"
+        },
+        "asset_class": {
+          "default": "",
+          "title": "Asset Class",
+          "type": "string"
+        },
+        "site": {
+          "default": "",
+          "title": "Site",
+          "type": "string"
+        },
+        "criticality": {
+          "default": "UNKNOWN",
+          "title": "Criticality",
+          "type": "string"
+        },
+        "parent_systems": {
+          "items": {
+            "$ref": "#/$defs/SystemNode"
+          },
+          "title": "Parent Systems",
+          "type": "array"
+        },
+        "components": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Components",
+          "type": "array"
+        },
+        "assigned_operators": {
+          "items": {
+            "$ref": "#/$defs/Operator"
+          },
+          "title": "Assigned Operators",
+          "type": "array"
+        },
+        "maintenance_window": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Maintenance Window"
+        },
+        "resolved_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Resolved At"
+        },
+        "source": {
+          "default": "unknown",
+          "title": "Source",
+          "type": "string"
+        },
+        "model_number": {
+          "default": "",
+          "title": "Model Number",
+          "type": "string"
+        },
+        "upstream_dependencies": {
+          "items": {
+            "$ref": "#/$defs/FlowRef"
+          },
+          "title": "Upstream Dependencies",
+          "type": "array"
+        },
+        "downstream_impacts": {
+          "items": {
+            "$ref": "#/$defs/FlowRef"
+          },
+          "title": "Downstream Impacts",
+          "type": "array"
+        },
+        "blast_radius": {
+          "default": 0,
+          "title": "Blast Radius",
+          "type": "integer"
+        },
+        "replica_observations": {
+          "items": {
+            "$ref": "#/$defs/ReplicaObservation"
+          },
+          "title": "Replica Observations",
+          "type": "array"
+        },
+        "cache_hit": {
+          "default": false,
+          "title": "Cache Hit",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "asset_id"
+      ],
+      "title": "OntologyContext",
+      "type": "object"
+    },
+    "Operator": {
+      "properties": {
+        "operator_id": {
+          "title": "Operator Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        },
+        "shift": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Shift"
+        },
+        "contact": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Contact"
+        },
+        "escalation_order": {
+          "default": 0,
+          "title": "Escalation Order",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "operator_id",
+        "name",
+        "role"
+      ],
+      "title": "Operator",
+      "type": "object"
+    },
+    "ReplicaObservation": {
+      "description": "One replica's Lamport timeline for an asset vertex.\n\nAn OR-Set element is live when its highest add stamp is strictly greater\nthan its highest remove stamp \u2014 equality is a tie, and a tie is not\nliveness. A vertex whose stamps are close, or that replicas disagree about,\nis a topology still converging, which is not a basis for planning an\nirreversible action against.",
+      "properties": {
+        "replica_id": {
+          "title": "Replica Id",
+          "type": "string"
+        },
+        "add_stamp": {
+          "default": 0,
+          "title": "Add Stamp",
+          "type": "integer"
+        },
+        "remove_stamp": {
+          "default": 0,
+          "title": "Remove Stamp",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "replica_id"
+      ],
+      "title": "ReplicaObservation",
+      "type": "object"
+    },
+    "RuleTrigger": {
+      "properties": {
+        "rule_id": {
+          "title": "Rule Id",
+          "type": "string"
+        },
+        "sensor_id": {
+          "title": "Sensor Id",
+          "type": "string"
+        },
+        "operator": {
+          "default": ">",
+          "title": "Operator",
+          "type": "string"
+        },
+        "threshold": {
+          "title": "Threshold",
+          "type": "number"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "observed_value": {
+          "title": "Observed Value",
+          "type": "number"
+        },
+        "exceeded_by": {
+          "default": 0.0,
+          "title": "Exceeded By",
+          "type": "number"
+        },
+        "exceeded_pct": {
+          "default": 0.0,
+          "title": "Exceeded Pct",
+          "type": "number"
+        },
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        }
+      },
+      "required": [
+        "rule_id",
+        "sensor_id",
+        "threshold",
+        "observed_value"
+      ],
+      "title": "RuleTrigger",
+      "type": "object"
+    },
+    "SensorReading": {
+      "properties": {
+        "sensor_id": {
+          "title": "Sensor Id",
+          "type": "string"
+        },
+        "value": {
+          "title": "Value",
+          "type": "number"
+        },
+        "unit": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Unit"
+        },
+        "observed_at": {
+          "format": "date-time",
+          "title": "Observed At",
+          "type": "string"
+        },
+        "age_seconds": {
+          "default": 0.0,
+          "title": "Age Seconds",
+          "type": "number"
+        }
+      },
+      "required": [
+        "sensor_id",
+        "value",
+        "observed_at"
+      ],
+      "title": "SensorReading",
+      "type": "object"
+    },
+    "Severity": {
+      "enum": [
+        "INFO",
+        "HIGH",
+        "CRITICAL"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "SystemNode": {
+      "properties": {
+        "node_id": {
+          "title": "Node Id",
+          "type": "string"
+        },
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "depth": {
+          "default": 0,
+          "title": "Depth",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "node_id",
+        "name",
+        "type"
+      ],
+      "title": "SystemNode",
+      "type": "object"
+    },
+    "TelemetrySnapshot": {
+      "properties": {
+        "trigger": {
+          "$ref": "#/$defs/SensorReading"
+        },
+        "readings": {
+          "items": {
+            "$ref": "#/$defs/SensorReading"
+          },
+          "title": "Readings",
+          "type": "array"
+        },
+        "captured_at": {
+          "format": "date-time",
+          "title": "Captured At",
+          "type": "string"
+        },
+        "complete": {
+          "default": false,
+          "title": "Complete",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "trigger",
+        "captured_at"
+      ],
+      "title": "TelemetrySnapshot",
+      "type": "object"
+    },
+    "Transition": {
+      "enum": [
+        "RAISED",
+        "ESCALATED",
+        "SUSTAINED",
+        "CLEARED"
+      ],
+      "title": "Transition",
+      "type": "string"
+    }
+  },
+  "description": "Published by the Go ontology resolution engine to the ontology.mutations topic when an anomaly rule changes an asset's alarm state. Keyed by asset_id so every mutation for one asset stays ordered on one partition. v2 adds the process flow around the asset: upstream_dependencies, downstream_impacts and blast_radius.",
+  "properties": {
+    "event_id": {
+      "title": "Event Id",
+      "type": "string"
+    },
+    "schema_version": {
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "producer": {
+      "default": "ontology-resolution-engine",
+      "title": "Producer",
+      "type": "string"
+    },
+    "emitted_at": {
+      "format": "date-time",
+      "title": "Emitted At",
+      "type": "string"
+    },
+    "asset_id": {
+      "title": "Asset Id",
+      "type": "string"
+    },
+    "transition": {
+      "$ref": "#/$defs/Transition"
+    },
+    "severity": {
+      "$ref": "#/$defs/Severity"
+    },
+    "anomaly_active_since": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Anomaly Active Since"
+    },
+    "breach_count": {
+      "default": 0,
+      "title": "Breach Count",
+      "type": "integer"
+    },
+    "rule": {
+      "$ref": "#/$defs/RuleTrigger"
+    },
+    "telemetry_snapshot": {
+      "$ref": "#/$defs/TelemetrySnapshot"
+    },
+    "ontology_context": {
+      "$ref": "#/$defs/OntologyContext"
+    },
+    "degraded": {
+      "default": false,
+      "title": "Degraded",
+      "type": "boolean"
+    },
+    "degraded_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Degraded Reason"
+    },
+    "source_partition": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Partition"
+    },
+    "source_offset": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Offset"
+    },
+    "origin_replica": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Origin Replica"
+    },
+    "lamport_clock": {
+      "default": 0,
+      "title": "Lamport Clock",
+      "type": "integer"
+    },
+    "graph_revision": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Graph Revision"
+    }
+  },
+  "required": [
+    "event_id",
+    "schema_version",
+    "emitted_at",
+    "asset_id",
+    "transition",
+    "severity",
+    "rule",
+    "telemetry_snapshot",
+    "ontology_context"
+  ],
+  "title": "Enriched Context Payload",
+  "type": "object"
+}
