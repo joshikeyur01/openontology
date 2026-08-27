@@ -1,0 +1,446 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenOntology — Operator Console</title>
+<!--
+  One file, no build step, no dependencies. The page is served as-is by the
+  console service and talks to two endpoints: /api/state for the first paint and
+  /api/stream (SSE) for everything after.
+
+  The layout answers one question in priority order: what is wrong right now,
+  what was the system told to do about it, and what has been happening. The
+  "focus" card at the top is the whole product in one glance — an alarm on the
+  left, the command sequence it produced on the right.
+-->
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #151b23;
+    --panel-2: #1c232c;
+    --line: #2a3441;
+    --text: #e6edf3;
+    --muted: #8b98a5;
+    --dim: #6a7683;
+    --critical: #f85149;
+    --high: #e3922a;
+    --ok: #3fb950;
+    --info: #58a6ff;
+    --accent: #a371f7;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 14px 22px;
+    background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    position: sticky; top: 0; z-index: 10;
+  }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  header h1 span { color: var(--dim); font-weight: 400; }
+  .spacer { flex: 1; }
+
+  .counts { display: flex; gap: 18px; }
+  .count { text-align: right; }
+  .count b { display: block; font-size: 18px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .count span { font-size: 10px; text-transform: uppercase; letter-spacing: .8px; color: var(--dim); }
+
+  .live { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ok); }
+  .dot.stale { background: var(--high); }
+  .dot.down  { background: var(--critical); }
+  .live.on .dot { animation: pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+
+  main { padding: 20px 22px 48px; max-width: 1680px; margin: 0 auto; }
+  section { margin-bottom: 26px; }
+  h2 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1.1px;
+    color: var(--dim); margin: 0 0 10px; font-weight: 600;
+  }
+
+  /* --- focus card: the newest alarm and the plan it caused ---------------- */
+  .focus {
+    display: grid; grid-template-columns: minmax(280px, 1fr) 1.6fr;
+    border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+    background: var(--panel);
+  }
+  .focus-alarm { padding: 20px 22px; border-right: 1px solid var(--line); }
+  .focus-alarm.critical { box-shadow: inset 3px 0 0 var(--critical); }
+  .focus-alarm.high     { box-shadow: inset 3px 0 0 var(--high); }
+  .focus-asset { font-size: 19px; font-weight: 600; font-family: var(--mono); }
+  .focus-name { color: var(--muted); margin-top: 2px; }
+  .focus-reading {
+    margin: 16px 0 4px; font-size: 30px; font-variant-numeric: tabular-nums;
+    font-family: var(--mono); font-weight: 600;
+  }
+  .focus-reading small { font-size: 15px; color: var(--muted); font-weight: 400; }
+  .focus-rule { color: var(--muted); font-size: 13px; }
+  .focus-meta { margin-top: 14px; display: flex; flex-wrap: wrap; gap: 6px; }
+
+  .focus-plan { padding: 20px 22px; }
+  .plan-head {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    margin-bottom: 14px; color: var(--muted); font-size: 12px;
+  }
+  .chain { display: flex; flex-direction: column; gap: 8px; }
+  .step {
+    display: grid; grid-template-columns: 26px 1fr; gap: 12px; align-items: start;
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 7px; padding: 11px 13px;
+  }
+  .step-n {
+    width: 26px; height: 26px; border-radius: 50%;
+    background: var(--bg); border: 1px solid var(--line);
+    display: grid; place-items: center;
+    font-size: 12px; font-family: var(--mono); color: var(--muted);
+  }
+  .step-head { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+  .action { font-family: var(--mono); font-weight: 600; letter-spacing: .3px; }
+  .step-target { font-family: var(--mono); color: var(--info); font-size: 13px; }
+  .step-effect { color: var(--muted); font-size: 12.5px; margin-top: 5px; }
+  .step-rollback { color: var(--dim); font-size: 12px; margin-top: 4px; }
+  .step-rollback b { color: var(--muted); font-weight: 500; }
+
+  /* --- badges ------------------------------------------------------------- */
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 20px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: .5px;
+    text-transform: uppercase; border: 1px solid transparent; white-space: nowrap;
+  }
+  .b-critical { background: rgba(248,81,73,.14);  color: var(--critical); border-color: rgba(248,81,73,.35); }
+  .b-high     { background: rgba(227,146,42,.14); color: var(--high);     border-color: rgba(227,146,42,.35); }
+  .b-ok       { background: rgba(63,185,80,.14);  color: var(--ok);       border-color: rgba(63,185,80,.35); }
+  .b-info     { background: rgba(88,166,255,.13); color: var(--info);     border-color: rgba(88,166,255,.32); }
+  .b-accent   { background: rgba(163,113,247,.14);color: var(--accent);   border-color: rgba(163,113,247,.35); }
+  .b-muted    { background: rgba(139,152,165,.12);color: var(--muted);    border-color: rgba(139,152,165,.28); }
+
+  /* --- asset grid --------------------------------------------------------- */
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(330px, 1fr)); }
+  .asset {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 9px; padding: 14px 16px;
+  }
+  .asset.critical { border-color: rgba(248,81,73,.45); }
+  .asset.high     { border-color: rgba(227,146,42,.45); }
+  .asset-head { display: flex; align-items: center; gap: 9px; margin-bottom: 10px; }
+  .asset-id { font-family: var(--mono); font-size: 13px; font-weight: 600; }
+  .channels { display: flex; flex-direction: column; gap: 5px; }
+  .channel {
+    display: grid; grid-template-columns: 1fr auto auto; gap: 10px;
+    align-items: baseline; padding: 4px 0;
+    border-top: 1px solid rgba(42,52,65,.55);
+  }
+  .channel:first-child { border-top: 0; }
+  .ch-name { color: var(--muted); font-size: 12.5px; font-family: var(--mono); }
+  .ch-value { font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 13px; }
+  .ch-value.critical { color: var(--critical); font-weight: 600; }
+  .ch-value.high     { color: var(--high); font-weight: 600; }
+  .ch-age { color: var(--dim); font-size: 11px; font-variant-numeric: tabular-nums; }
+
+  /* --- feeds -------------------------------------------------------------- */
+  .cols { display: grid; gap: 20px; grid-template-columns: 1fr 1fr; }
+  .feed {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 9px; max-height: 460px; overflow-y: auto;
+  }
+  .row {
+    display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+    padding: 9px 14px; border-bottom: 1px solid rgba(42,52,65,.55); font-size: 13px;
+  }
+  .row:last-child { border-bottom: 0; }
+  .row time { color: var(--dim); font-size: 11px; font-family: var(--mono); margin-left: auto; }
+  .row .asset-ref { font-family: var(--mono); font-size: 12.5px; color: var(--info); }
+  .row .detail { color: var(--muted); font-size: 12.5px; }
+
+  .empty { padding: 26px; text-align: center; color: var(--dim); font-size: 13px; }
+  .empty code {
+    font-family: var(--mono); background: var(--panel-2);
+    padding: 2px 6px; border-radius: 4px; color: var(--muted);
+  }
+
+  footer {
+    padding: 16px 22px; border-top: 1px solid var(--line);
+    color: var(--dim); font-size: 11.5px; text-align: center;
+  }
+  footer a { color: var(--muted); }
+
+  @media (max-width: 1000px) {
+    .focus { grid-template-columns: 1fr; }
+    .focus-alarm { border-right: 0; border-bottom: 1px solid var(--line); }
+    .cols { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>OpenOntology <span>· operator console</span></h1>
+  <div class="live" id="live"><span class="dot" id="dot"></span><span id="live-text">connecting…</span></div>
+  <div class="spacer"></div>
+  <div class="counts">
+    <div class="count"><b id="c-assets">—</b><span>assets</span></div>
+    <div class="count"><b id="c-alarming">—</b><span>alarming</span></div>
+    <div class="count"><b id="c-mutations">—</b><span>mutations</span></div>
+    <div class="count"><b id="c-commands">—</b><span>commands</span></div>
+  </div>
+</header>
+
+<main>
+  <section id="focus-section" hidden>
+    <h2>Active alarm and the sequence it produced</h2>
+    <div class="focus" id="focus"></div>
+  </section>
+
+  <section>
+    <h2>Live twin state</h2>
+    <div class="grid" id="assets"></div>
+  </section>
+
+  <section>
+    <div class="cols">
+      <div>
+        <h2>Recent mutations <span style="color:var(--dim)">· open core</span></h2>
+        <div class="feed" id="mutations"></div>
+      </div>
+      <div>
+        <h2>Recent commands <span style="color:var(--dim)">· commercial layer</span></h2>
+        <div class="feed" id="commands"></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer>
+  Read-only. This console consumes <code>ontology.mutations</code> and <code>ontology.commands</code>
+  and reads twin state from Redis; it never produces, never writes, and holds no licence.
+</footer>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  // Everything from the pipeline is rendered as text, never as markup: asset
+  // ids, operator names and model-authored strings all reach this page from
+  // outside, and innerHTML on any of them is an injection.
+  const text = (tag, cls, value) => {
+    const el = document.createElement(tag);
+    if (cls) el.className = cls;
+    if (value !== undefined && value !== null) el.textContent = String(value);
+    return el;
+  };
+  const sev = (s) => (s === "CRITICAL" ? "critical" : s === "HIGH" ? "high" : "");
+  const badge = (label, kind) => text("span", "badge b-" + kind, label);
+
+  const num = (v, digits = 2) =>
+    v === null || v === undefined || Number.isNaN(v) ? "—" : Number(v).toFixed(digits).replace(/\.?0+$/, "");
+
+  const clock = (iso) => {
+    if (!iso) return "";
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? "" : d.toLocaleTimeString();
+  };
+
+  const ACTION_KIND = {
+    ISOLATE: "critical", SHUTDOWN: "critical", EMERGENCY_SHUTDOWN: "critical",
+    SHIFT_SPEED: "high", THROTTLE: "high", REDUCE_LOAD: "high",
+    INSPECT: "info", SCHEDULE_MAINTENANCE: "info", MONITOR: "info",
+    NOTIFY: "accent", ESCALATE: "accent", ACKNOWLEDGE: "muted",
+  };
+
+  // ---- focus card --------------------------------------------------------
+  function renderFocus(focus) {
+    const section = $("focus-section");
+    if (!focus) { section.hidden = true; return; }
+    section.hidden = false;
+
+    const { mutation: m, commands } = focus;
+    const box = $("focus");
+    box.replaceChildren();
+
+    const left = text("div", "focus-alarm " + sev(m.severity));
+    left.appendChild(text("div", "focus-asset", m.asset_id));
+    if (m.asset_name) left.appendChild(text("div", "focus-name", m.asset_name));
+
+    const reading = text("div", "focus-reading", num(m.observed_value));
+    if (m.unit) reading.appendChild(text("small", null, " " + m.unit));
+    left.appendChild(reading);
+
+    left.appendChild(text("div", "focus-rule",
+      `${m.sensor_id} · limit ${num(m.threshold)}${m.unit ? " " + m.unit : ""}` +
+      (m.exceeded_pct ? ` · exceeded by ${num(m.exceeded_pct, 1)}%` : "")));
+
+    const meta = text("div", "focus-meta");
+    if (m.severity) meta.appendChild(badge(m.severity, sev(m.severity) || "muted"));
+    if (m.transition) meta.appendChild(badge(m.transition, "info"));
+    if (m.criticality) meta.appendChild(badge(m.criticality.replace(/_/g, " "), "muted"));
+    if (m.site) meta.appendChild(badge(m.site, "muted"));
+    if (m.degraded) meta.appendChild(badge("degraded context", "high"));
+    left.appendChild(meta);
+    box.appendChild(left);
+
+    const right = text("div", "focus-plan");
+    const head = text("div", "plan-head");
+    head.appendChild(text("span", null, `${commands.length} command${commands.length === 1 ? "" : "s"}`));
+    const first = commands[0] || {};
+    if (first.assigned_to) head.appendChild(text("span", null, "· assigned to " + first.assigned_to));
+    if (first.confidence !== null && first.confidence !== undefined) {
+      head.appendChild(text("span", null, `· confidence ${Math.round(first.confidence * 100)}%`));
+    }
+    if (first.requires_human_approval) head.appendChild(badge("human approval required", "high"));
+    right.appendChild(head);
+
+    const chain = text("div", "chain");
+    for (const c of commands) {
+      const step = text("div", "step");
+      step.appendChild(text("div", "step-n", c.sequence ?? "•"));
+
+      const body = text("div");
+      const h = text("div", "step-head");
+      h.appendChild(badge(c.action || "ACTION", ACTION_KIND[c.action] || "muted"));
+      if (c.component) h.appendChild(text("span", "step-target", c.component));
+      if (c.priority) h.appendChild(badge(c.priority, sev(c.priority) || "muted"));
+      body.appendChild(h);
+
+      if (c.expected_effect) body.appendChild(text("div", "step-effect", c.expected_effect));
+      if (c.rollback) {
+        const rb = text("div", "step-rollback");
+        rb.appendChild(text("b", null, "rollback: "));
+        rb.appendChild(document.createTextNode(c.rollback));
+        body.appendChild(rb);
+      }
+      step.appendChild(body);
+      chain.appendChild(step);
+    }
+    right.appendChild(chain);
+    box.appendChild(right);
+  }
+
+  // ---- assets ------------------------------------------------------------
+  function renderAssets(assets) {
+    const host = $("assets");
+    host.replaceChildren();
+
+    if (!assets.length) {
+      const e = text("div", "empty");
+      e.appendChild(document.createTextNode("No twin state yet. Run "));
+      e.appendChild(text("code", null, "make seed"));
+      e.appendChild(document.createTextNode(" to push telemetry through the pipeline."));
+      host.appendChild(e);
+      return;
+    }
+
+    for (const a of assets) {
+      const level = a.alarm ? sev(a.alarm.severity) : "";
+      const card = text("div", "asset " + level);
+
+      const head = text("div", "asset-head");
+      head.appendChild(text("span", "asset-id", a.asset_id));
+      if (a.alarm) {
+        head.appendChild(badge(a.alarm.severity, level || "muted"));
+        if (a.alarm_count > 1) head.appendChild(badge(a.alarm_count + " channels", "muted"));
+      } else {
+        head.appendChild(badge("nominal", "ok"));
+      }
+      card.appendChild(head);
+
+      const channels = text("div", "channels");
+      for (const ch of a.sensors) {
+        const row = text("div", "channel");
+        row.appendChild(text("span", "ch-name", ch.sensor_id));
+        const lvl = ch.alarm ? sev(ch.alarm.severity) : "";
+        row.appendChild(text("span", "ch-value " + lvl,
+          num(ch.value) + (ch.unit ? " " + ch.unit : "")));
+        row.appendChild(text("span", "ch-age",
+          ch.age_seconds === null ? "" : ch.age_seconds + "s ago"));
+        channels.appendChild(row);
+      }
+      card.appendChild(channels);
+      host.appendChild(card);
+    }
+  }
+
+  // ---- feeds -------------------------------------------------------------
+  function renderMutations(rows) {
+    const host = $("mutations");
+    host.replaceChildren();
+    if (!rows.length) { host.appendChild(text("div", "empty", "Nothing on ontology.mutations yet.")); return; }
+
+    for (const m of rows) {
+      const row = text("div", "row");
+      row.appendChild(badge(m.transition || "—", m.transition === "CLEARED" ? "ok" : sev(m.severity) || "muted"));
+      row.appendChild(text("span", "asset-ref", m.asset_id));
+      row.appendChild(text("span", "detail",
+        `${m.sensor_id} ${num(m.observed_value)}${m.unit ? " " + m.unit : ""} / limit ${num(m.threshold)}`));
+      if (m.degraded) row.appendChild(badge("degraded", "high"));
+      row.appendChild(text("time", null, clock(m.emitted_at)));
+      host.appendChild(row);
+    }
+  }
+
+  function renderCommands(rows) {
+    const host = $("commands");
+    host.replaceChildren();
+    if (!rows.length) { host.appendChild(text("div", "empty", "Nothing on ontology.commands yet.")); return; }
+
+    for (const c of rows) {
+      const row = text("div", "row");
+      row.appendChild(badge(c.action || "—", ACTION_KIND[c.action] || "muted"));
+      row.appendChild(text("span", "asset-ref", c.asset_id));
+      if (c.component) row.appendChild(text("span", "detail", c.component));
+      if (c.assigned_to) row.appendChild(text("span", "detail", "→ " + c.assigned_to));
+      if (c.requires_human_approval) row.appendChild(badge("approval", "high"));
+      row.appendChild(text("time", null, clock(c.issued_at)));
+      host.appendChild(row);
+    }
+  }
+
+  // ---- wiring ------------------------------------------------------------
+  function render(state) {
+    $("c-assets").textContent = state.counts.assets;
+    $("c-alarming").textContent = state.counts.alarming;
+    $("c-mutations").textContent = state.counts.mutations;
+    $("c-commands").textContent = state.counts.commands;
+
+    renderFocus(state.focus);
+    renderAssets(state.assets);
+    renderMutations(state.mutations);
+    renderCommands(state.commands);
+
+    setLive(state.healthy ? "on" : "stale",
+            state.healthy ? "live" : "twin state unavailable");
+  }
+
+  function setLive(mode, label) {
+    const live = $("live"), dot = $("dot");
+    live.className = "live" + (mode === "on" ? " on" : "");
+    dot.className = "dot" + (mode === "on" ? "" : mode === "stale" ? " stale" : " down");
+    $("live-text").textContent = label;
+  }
+
+  // First paint from a plain fetch so the page is useful before the stream's
+  // first tick, then hand over to SSE. EventSource reconnects on its own, so a
+  // console left open through a restart recovers without a reload.
+  fetch("/api/state")
+    .then((r) => r.json())
+    .then(render)
+    .catch(() => setLive("down", "unreachable"));
+
+  const stream = new EventSource("/api/stream");
+  stream.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch (_) {} };
+  stream.onerror = () => setLive("down", "reconnecting…");
+})();
+</script>
+</body>
+</html>
