@@ -1,0 +1,17 @@
+# Loads every dashboard JSON in ops/grafana/dashboards at boot and keeps
+# watching the directory, so editing a file is enough to update the dashboard.
+apiVersion: 1
+
+providers:
+  - name: openontology
+    orgId: 1
+    folder: OpenOntology
+    type: file
+    # Deletes the dashboard from Grafana when its file is removed, so the
+    # directory is the source of truth rather than accumulating orphans.
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 10
+    options:
+      path: /etc/grafana/dashboards
+      foldersFromFilesStructure: false

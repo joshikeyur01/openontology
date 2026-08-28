@@ -1,0 +1,20 @@
+# Provisioned datasource. Grafana reads this at boot, so nothing has to be
+# clicked through the UI for the dashboard to have data behind it.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    # The dashboard JSON refers to this uid, not to the name. A name can be
+    # changed in the UI; the uid is what keeps the panels bound to the source.
+    uid: openontology-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      # Must match global.scrape_interval in ops/prometheus/prometheus.yml.
+      # Grafana uses it to choose a minimum step, and a value below the real
+      # scrape interval produces staircase artifacts on rate() panels.
+      timeInterval: 5s
+      httpMethod: POST

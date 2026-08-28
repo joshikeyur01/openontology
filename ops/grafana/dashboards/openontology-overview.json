@@ -1,0 +1,1542 @@
+{
+  "uid": "openontology-overview",
+  "title": "OpenOntology \u2014 Telemetry to Commands",
+  "description": "The whole pipeline on one screen: telemetry entering the open-core engine, anomalies becoming mutations, and the commercial layer turning those into command sequences. Top row is health at a glance; the rows below explain it.",
+  "tags": [
+    "openontology"
+  ],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "5s",
+  "time": {
+    "from": "now-15m",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "rate_window",
+        "label": "Rate window",
+        "type": "interval",
+        "query": "30s,1m,5m,15m",
+        "current": {
+          "text": "1m",
+          "value": "1m"
+        },
+        "auto": false,
+        "hide": 0
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "id": 100,
+      "title": "At a glance",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "id": 1,
+      "title": "Ingestion",
+      "description": "Telemetry events consumed from telemetry.raw, per second.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 0,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(openontology_events_consumed_total[$rate_window]))",
+          "legendFormat": "events/s"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "textMode": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 1,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "Anomaly rate",
+      "description": "Share of evaluated readings that breached a threshold. Rises when the fleet degrades; a flat 0 with live ingestion means the rules are never firing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 4,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(openontology_anomalies_total[$rate_window])) / clamp_min(sum(rate(openontology_rules_evaluated_total[$rate_window])), 0.0001)",
+          "legendFormat": "anomalous"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.2
+              },
+              {
+                "color": "red",
+                "value": 0.5
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "Graph cache hit rate",
+      "description": "Fraction of ontology lookups served from the TTL cache instead of a Neo4j traversal. The graph sits on the ingestion hot path, so this is what keeps it there safely \u2014 a re-alerting asset should re-traverse nothing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 8,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(openontology_graph_cache_hits_total) / clamp_min(sum(openontology_graph_lookups_total), 1)",
+          "legendFormat": "hit rate"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 4,
+      "title": "Dead-letter depth",
+      "description": "Messages on telemetry.dlq and ontology.commands.dlq, read from broker offsets rather than from any service's memory of what it routed. 0 is the healthy answer; anything else is a poison pill that needs looking at.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 12,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(kafka_topic_partition_current_offset{topic=~\".*\\\\.dlq\"})",
+          "legendFormat": "dead-lettered"
+        }
+      ],
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 5,
+      "title": "Interceptor p95",
+      "description": "95th percentile time to produce a command sequence, including the model call. The offline mock planner answers in tens of milliseconds; a real model takes seconds.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 16,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(openontology_interceptor_request_duration_seconds_bucket{endpoint=\"/v1/intercept\"}[$rate_window])))",
+          "legendFormat": "p95"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 3,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 25
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "stat",
+      "id": 6,
+      "title": "Mean plan confidence",
+      "description": "Confidence reported on issued command sequences. Derived from the histogram sum over its count, so it is the true mean rather than a quantile.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 1
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(openontology_interceptor_plan_confidence_sum) / clamp_min(sum(openontology_interceptor_plan_confidence_count), 1)",
+          "legendFormat": "confidence"
+        }
+      ],
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 1,
+          "min": 0,
+          "max": 1,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.6
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "row",
+      "id": 101,
+      "title": "Open core \u2014 ingestion and the alarm state machine",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 5
+      },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "id": 10,
+      "title": "Ingestion pipeline",
+      "description": "What happened to every event read from telemetry.raw. Rejected events are malformed; stale ones lost the monotonic-timestamp check; duplicates were absorbed by the idempotency filter. A large stale fraction usually means telemetry is being produced unkeyed, so one channel's samples are spread across partitions and arrive interleaved.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(openontology_events_consumed_total[$rate_window]))",
+          "legendFormat": "consumed"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(openontology_cache_writes_total[$rate_window]))",
+          "legendFormat": "cached"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(openontology_events_stale_total[$rate_window]))",
+          "legendFormat": "stale"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(openontology_events_rejected_total[$rate_window]))",
+          "legendFormat": "rejected"
+        },
+        {
+          "refId": "E",
+          "expr": "sum(rate(openontology_events_duplicate_total[$rate_window]))",
+          "legendFormat": "duplicate"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "rejected"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "stale"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 11,
+      "title": "Mutation transitions by type",
+      "description": "Why each mutation was emitted. RAISED is a fleet developing faults; SUSTAINED is a fleet nobody is fixing; CLEARED failing to catch up with RAISED is the one worth waking up for. Everything the state machine absorbed \u2014 a sensor flapping either side of a threshold \u2014 never appears here, which is the point of the state machine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (transition) (rate(openontology_mutation_transitions_total[$rate_window]))",
+          "legendFormat": "{{transition}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 60,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "RAISED"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "orange"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ESCALATED"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "SUSTAINED"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CLEARED"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "Graph tier",
+      "description": "Lookups against the ontology graph, and how they resolved. Degraded mutations were emitted without full context rather than dropped \u2014 the engine would rather deliver a thin CRITICAL than none. A sustained gap between lookups and hits means the TTL cache is not helping and traversals are on the hot path for real.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(openontology_graph_lookups_total[$rate_window]))",
+          "legendFormat": "lookups"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(openontology_graph_cache_hits_total[$rate_window]))",
+          "legendFormat": "cache hits"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(openontology_graph_errors_total[$rate_window]))",
+          "legendFormat": "errors"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(openontology_graph_degraded_total[$rate_window]))",
+          "legendFormat": "degraded mutations"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "errors"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 13,
+      "title": "Consumer lag",
+      "description": "How far each consumer group is behind the head of its topic. This is the metric that makes the topic-between-services design legible: when the interceptor slows down, lag on ontology.mutations grows and ingestion carries on unaffected. Lag that grows without recovering is the real alert. Clamped at zero because kafka-exporter reports -1 for a partition the group has not yet committed an offset for, and summing that sentinel produces negative lag.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (consumergroup, topic) (clamp_min(kafka_consumergroup_lag, 0))",
+          "legendFormat": "{{consumergroup}} / {{topic}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 102,
+      "title": "Commercial layer \u2014 licensing, planning and the closure loop",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "id": 20,
+      "title": "Interceptor latency percentiles",
+      "description": "Time to serve POST /v1/intercept, which is dominated by the model call. p50 against p99 is the useful comparison: a widening gap means some plans are retrying or hitting the planner's own 30s deadline while the median stays fine.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 22
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(openontology_interceptor_request_duration_seconds_bucket{endpoint=\"/v1/intercept\"}[$rate_window])))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(openontology_interceptor_request_duration_seconds_bucket{endpoint=\"/v1/intercept\"}[$rate_window])))",
+          "legendFormat": "p95"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(openontology_interceptor_request_duration_seconds_bucket{endpoint=\"/v1/intercept\"}[$rate_window])))",
+          "legendFormat": "p99"
+        },
+        {
+          "refId": "D",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(openontology_worker_interceptor_latency_seconds_bucket[$rate_window])))",
+          "legendFormat": "p95 as the worker sees it"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "p95 as the worker sees it"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "purple"
+                }
+              },
+              {
+                "id": "custom.lineStyle",
+                "value": {
+                  "fill": "dash",
+                  "dash": [
+                    10,
+                    10
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 21,
+      "title": "Plan confidence distribution",
+      "description": "Quantiles of the confidence reported on issued plans. Low confidence on a degraded input is expected \u2014 the prompt is told to prefer inspection over irreversible actions when context is incomplete. Low confidence on complete context is the interesting case.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 22
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.10, sum by (le) (rate(openontology_interceptor_plan_confidence_bucket[$rate_window])))",
+          "legendFormat": "p10"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(openontology_interceptor_plan_confidence_bucket[$rate_window])))",
+          "legendFormat": "median"
+        },
+        {
+          "refId": "C",
+          "expr": "histogram_quantile(0.90, sum by (le) (rate(openontology_interceptor_plan_confidence_bucket[$rate_window])))",
+          "legendFormat": "p90"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 22,
+      "title": "Licence enforcement",
+      "description": "The paywall, as traffic. Every series here is a request refused before any billable work happened: an unrecognised key, an expired subscription, a tier without the ai.intercept feature, or a subscription over its quota. COMMUNITY keys land in feature_not_licensed.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 30
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (rate(openontology_interceptor_license_rejections_total[$rate_window]))",
+          "legendFormat": "{{reason}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 50,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 23,
+      "title": "Interceptor call outcomes, by fault",
+      "description": "As the closure loop experienced them. ok is a plan returned; throttled means the worker outran its learned pace; auth_failure and payload_rejected are terminal and dead-letter immediately, while timeout and server_error are retried with backoff.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 30
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (cause) (rate(openontology_worker_interceptor_calls_total[$rate_window]))",
+          "legendFormat": "{{cause}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 50,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ok"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 24,
+      "title": "Commands issued, by action",
+      "description": "What the system actually told operators to do. The severity of the action mix is the outcome the whole pipeline exists to produce \u2014 ISOLATE and SHUTDOWN against a live asset are not the same event as INSPECT and NOTIFY.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 30
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (action) (rate(openontology_worker_commands_by_action_total[$rate_window]))",
+          "legendFormat": "{{action}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 50,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 25,
+      "title": "Idempotency: inferences avoided",
+      "description": "Kafka delivers at least once, so the same mutation reaches the planner more than once as a matter of routine. Every replay here is an inference that was not paid for and a second ISOLATE that was not issued against a live asset.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 37
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(openontology_interceptor_plans_issued_total[$rate_window]))",
+          "legendFormat": "plans issued (inference paid)"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(openontology_interceptor_plan_replays_total[$rate_window])) or vector(0)",
+          "legendFormat": "replays (inference avoided)"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(openontology_events_duplicate_total[$rate_window]))",
+          "legendFormat": "duplicates dropped at ingestion"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "replays (inference avoided)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 26,
+      "title": "Dead-letter topics",
+      "description": "Depth of telemetry.dlq and ontology.commands.dlq, from broker offsets. Poison pills are committed rather than retried forever, so a rising line here is a class of malformed input or a terminal licence failure \u2014 not a stuck partition.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 37
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (topic) (kafka_topic_partition_current_offset{topic=~\".*\\\\.dlq\"})",
+          "legendFormat": "{{topic}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 20,
+            "showPoints": "never"
+          },
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "max"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "row",
+      "id": 103,
+      "title": "Enterprise tier \u2014 GraphRAG two-agent isolation, and edge replication",
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 44
+      },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "id": 30,
+      "title": "Fault attribution",
+      "description": "What the deterministic topology kernel concluded before either agent ran. LOCALIZED_COMPONENT means the breach is contained to the asset; INHERITED_CASCADE means an upstream node is the real origin and isolating this one would treat a symptom.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 45
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (fault_classification) (rate(openontology_graphrag_actions_issued_total[$rate_window]))",
+          "legendFormat": "{{fault_classification}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 50,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal",
+              "group": "A"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 31,
+      "title": "Irreversible actions, and the guardrails that stopped them",
+      "description": "The safety property this layer rests on. Guardrails run after the planner, so neither a model error nor a prompt injection can route around them \u2014 a downgrade appearing here is the system refusing to shut down an asset on a topology it does not trust.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 45
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reversible) (rate(openontology_graphrag_actions_issued_total[$rate_window]))",
+          "legendFormat": "reversible={{reversible}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(openontology_graphrag_guardrails_applied_total[$rate_window])) or vector(0)",
+          "legendFormat": "guardrails fired"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "reversible=false"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "guardrails fired"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "green"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull",
+            "sum"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 32,
+      "title": "Graph trust",
+      "description": "How trustworthy the replicated topology was judged to be, 0 to 1. Falls when replicas disagree about the asset vertex \u2014 which is what should withhold an irreversible action rather than merely annotate it.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 45
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum by (le) (rate(openontology_graphrag_graph_trust_bucket[$rate_window])))",
+          "legendFormat": "median"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.10, sum by (le) (rate(openontology_graphrag_graph_trust_bucket[$rate_window])))",
+          "legendFormat": "p10"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 5,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 33,
+      "title": "Replica convergence",
+      "description": "Lamport clocks and live vertex counts per site. Converged replicas hold the same vertex count and stop advancing their clocks \u2014 a clock that climbs while nothing changes means writes are not content-addressed and anti-entropy will never settle.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 52
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "openontology_replica_live_vertices",
+          "legendFormat": "{{job}} vertices"
+        },
+        {
+          "refId": "B",
+          "expr": "openontology_replica_lamport_clock",
+          "legendFormat": "{{job}} clock"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "id": 34,
+      "title": "Anti-entropy",
+      "description": "Peer exchanges and their outcome. Sync failures during a deliberate partition are expected; writes skipped is the content-addressing working \u2014 a fleet whose topology is unchanged should be writing almost nothing.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "openontology-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 52
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(openontology_replica_merges_applied_total[$rate_window]))",
+          "legendFormat": "merges applied"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(openontology_replica_sync_failures_total[$rate_window]))",
+          "legendFormat": "sync failures"
+        },
+        {
+          "refId": "C",
+          "expr": "sum(rate(openontology_replica_writes_skipped_total[$rate_window]))",
+          "legendFormat": "writes skipped (content unchanged)"
+        },
+        {
+          "refId": "D",
+          "expr": "sum(rate(openontology_replica_vertex_writes_total[$rate_window]))",
+          "legendFormat": "vertex writes"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": {
+            "lineWidth": 2,
+            "fillOpacity": 8,
+            "showPoints": "never"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "sync failures"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "red"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom",
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      }
+    }
+  ]
+}

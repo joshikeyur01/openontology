@@ -1,0 +1,83 @@
+# Scrape configuration for the OpenOntology topology.
+#
+# Every target here is inside the compose network and reached by service name,
+# so this file works unchanged whether the stack runs on a laptop or in CI.
+
+global:
+  # 5s rather than the usual 15s. This is a demonstration topology where a
+  # `make seed` run produces its whole burst of telemetry in seconds; at 15s a
+  # complete run would land in one or two samples and the dashboard would show
+  # a spike with no shape. Scrape cost is irrelevant at five targets.
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 15s
+  external_labels:
+    topology: openontology
+
+scrape_configs:
+  # --- Open core -----------------------------------------------------------
+  - job_name: resolution-engine
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["resolution-engine:8081"]
+        labels:
+          component: engine
+          licence: apache-2.0
+
+  - job_name: command-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["command-worker:8082"]
+        labels:
+          component: closure-loop
+          licence: apache-2.0
+
+  # --- Commercial layer ----------------------------------------------------
+  - job_name: ai-interceptor
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["ai-interceptor:8000"]
+        labels:
+          component: interceptor
+          licence: busl-1.1
+
+  - job_name: graphrag-interceptor
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["graphrag-interceptor:8010"]
+        labels:
+          component: graphrag
+          licence: busl-1.1
+
+  - job_name: resolution-engine-edge
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["resolution-engine-edge:8081"]
+        labels:
+          component: engine
+          site: edge
+          licence: apache-2.0
+
+  # The operator console is deliberately not scraped: it exports no metrics.
+  # It is a read-only view over live state, and everything worth counting about
+  # it is already counted by the services it reads from. A target that 404s
+  # would sit permanently down on the dashboard for no information.
+
+  # --- Infrastructure ------------------------------------------------------
+  #
+  # The engine counts the messages it routed to a dead-letter topic, which is
+  # not the same as how many are sitting there: it misses anything written by
+  # another producer and resets when the process restarts. kafka-exporter reads
+  # the partition offsets, so DLQ depth and consumer lag are properties of the
+  # broker rather than of any one service's memory of what it did.
+  - job_name: kafka
+    static_configs:
+      - targets: ["kafka-exporter:9308"]
+        labels:
+          component: kafka
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          component: prometheus
