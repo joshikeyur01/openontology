@@ -1,0 +1,647 @@
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+name: openontology
+
+services:
+  # ---------------------------------------------------------------------------
+  # Coordination + event backbone
+  # ---------------------------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.6.1
+    container_name: oo-zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_INIT_LIMIT: 5
+      ZOOKEEPER_SYNC_LIMIT: 2
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+      - zookeeper-log:/var/lib/zookeeper/log
+    healthcheck:
+      # "srvr" rather than the more familiar "ruok": ZooKeeper 3.5+ ships a
+      # four-letter-word allowlist containing only srvr, and the Confluent
+      # image does not translate 4LW_COMMANDS_WHITELIST into zookeeper.properties.
+      test: ["CMD-SHELL", "echo srvr | nc -w 2 localhost 2181 | grep -q Mode"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    logging: *default-logging
+    networks: [ontology]
+
+  kafka:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: oo-kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    ports:
+      # EXTERNAL listener, for tooling running on the host.
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:29092,EXTERNAL://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:29092,EXTERNAL://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Topics are created explicitly by kafka-init so partition counts and
+      # retention are deliberate rather than accidental.
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_NUM_PARTITIONS: 6
+      KAFKA_LOG_RETENTION_HOURS: 168
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:29092"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    logging: *default-logging
+    networks: [ontology]
+
+  kafka-init:
+    image: confluentinc/cp-kafka:7.6.1
+    container_name: oo-kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command: >
+      "set -euo pipefail;
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic telemetry.raw --partitions 6 --replication-factor 1 --config retention.ms=604800000;
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic ontology.mutations --partitions 6 --replication-factor 1 --config retention.ms=2592000000;
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic ontology.commands --partitions 6 --replication-factor 1 --config retention.ms=2592000000;
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic ontology.commands.dlq --partitions 3 --replication-factor 1 --config retention.ms=2592000000;
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic telemetry.dlq --partitions 3 --replication-factor 1 --config retention.ms=2592000000;
+      kafka-topics --bootstrap-server kafka:29092 --create --if-not-exists --topic ontology.mutations.edge --partitions 6 --replication-factor 1 --config retention.ms=604800000;
+      echo 'topics ready:';
+      kafka-topics --bootstrap-server kafka:29092 --list"
+    logging: *default-logging
+    networks: [ontology]
+
+  # ---------------------------------------------------------------------------
+  # Live twin state
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7.2-alpine
+    container_name: oo-redis
+    ports:
+      - "6379:6379"
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - 512mb
+      # volatile-lru: every twin key carries a TTL, so only expiring keys are
+      # eligible for eviction under memory pressure.
+      - --maxmemory-policy
+      - volatile-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    logging: *default-logging
+    networks: [ontology]
+
+  # ---------------------------------------------------------------------------
+  # Ontology topology graph
+  # ---------------------------------------------------------------------------
+  neo4j:
+    image: neo4j:5-community
+    container_name: oo-neo4j
+    ports:
+      - "7474:7474"   # HTTP browser
+      - "7687:7687"   # Bolt
+    environment:
+      # NEO4J_AUTH is special-cased by the image entrypoint. Every other
+      # NEO4J_-prefixed variable is translated into a server setting, so the
+      # copy the healthcheck and seeder read carries an OO_ prefix instead.
+      NEO4J_AUTH: neo4j/${NEO4J_PASSWORD:-openontology}
+      OO_NEO4J_PASSWORD: ${NEO4J_PASSWORD:-openontology}
+      # Sized for a laptop running the whole topology. The fixture ontology is
+      # a few dozen nodes; the page cache only has to hold its indexes.
+      NEO4J_server_memory_heap_initial__size: 512m
+      NEO4J_server_memory_heap_max__size: 1G
+      NEO4J_server_memory_pagecache_size: 256m
+      NEO4J_db_transaction_timeout: 10s
+    volumes:
+      - neo4j-data:/data
+      - neo4j-logs:/logs
+    healthcheck:
+      # A Bolt query rather than a port probe: the HTTP listener answers well
+      # before the database is ready to serve Cypher, and the seeder that gates
+      # on this needs the latter.
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p \"$$OO_NEO4J_PASSWORD\" 'RETURN 1' >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [ontology]
+
+  neo4j-seed:
+    # Revisions are versioned .cypher files in ops/neo4j, not inline Cypher, so
+    # a change to the ontology is reviewable in a diff. They are baked into the
+    # image rather than bind-mounted; see ops/neo4j/Dockerfile for why.
+    build:
+      context: ./ops/neo4j
+    container_name: oo-neo4j-seed
+    depends_on:
+      neo4j:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      OO_NEO4J_URI: bolt://neo4j:7687
+      OO_NEO4J_USER: neo4j
+      OO_NEO4J_PASSWORD: ${NEO4J_PASSWORD:-openontology}
+      OO_NEO4J_DATABASE: neo4j
+    logging: *default-logging
+    networks: [ontology]
+
+  # ---------------------------------------------------------------------------
+  # Open core: Go ontology resolution engine
+  # ---------------------------------------------------------------------------
+  resolution-engine:
+    build:
+      context: ./services/resolution-engine
+      args:
+        VERSION: ${OO_VERSION:-1.0.0}
+    container_name: oo-resolution-engine
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      # The graph is a degradable dependency — the engine boots and emits
+      # degraded mutations without it — but waiting for the seed means the very
+      # first mutation of a fresh `make up` is already fully enriched rather
+      # than racing the loader.
+      neo4j-seed:
+        condition: service_completed_successfully
+        required: false
+    ports:
+      - "8081:8081"
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      KAFKA_CONSUMER_GROUP: ontology-resolution-engine
+      KAFKA_SOURCE_TOPIC: telemetry.raw
+      KAFKA_MUTATION_TOPIC: ontology.mutations
+      KAFKA_DLQ_TOPIC: telemetry.dlq
+      REDIS_ADDR: redis:6379
+      TWIN_STATE_TTL: 24h
+      ENGINE_WORKERS: "4"
+      ENGINE_OP_TIMEOUT: 5s
+      RULE_VIBRATION_INDEX_MAX: "8.5"
+      RULE_TEMPERATURE_CELSIUS_MAX: "110.0"
+      RULE_REALERT_INTERVAL: 5m
+      RULE_HYSTERESIS_RATIO: "0.05"
+      RULE_CRITICAL_RATIO: "0.15"
+      # Graph tier. The binary defaults to "mock" so a bare `go run` needs no
+      # server; compose opts into the real one. Set GRAPH_PROVIDER=mock in the
+      # environment (or .env) to run the whole topology on fixtures again.
+      GRAPH_PROVIDER: ${GRAPH_PROVIDER:-neo4j}
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USERNAME: neo4j
+      NEO4J_PASSWORD: ${NEO4J_PASSWORD:-openontology}
+      NEO4J_DATABASE: neo4j
+      NEO4J_MAX_POOL_SIZE: "32"
+      NEO4J_CONNECT_TIMEOUT: 10s
+      GRAPH_CACHE_TTL: 5m
+      # Hard ceiling on one traversal, well inside ENGINE_OP_TIMEOUT. A slow
+      # graph fails the enrichment; it never backs up the ingestion thread.
+      GRAPH_QUERY_BUDGET: 3s
+      GRAPH_SIMULATED_LATENCY: 12ms
+      HTTP_ADDR: ":8081"
+      LOG_LEVEL: info
+      # Distributed idempotency filter.
+      IDEMPOTENCY_ENABLED: "true"
+      IDEMPOTENCY_TTL: 5s
+      IDEMPOTENCY_SCOPE: asset_sensor
+      IDEMPOTENCY_KEY_PREFIX: "dedupe:"
+      IDEMPOTENCY_FAIL_OPEN: "true"
+      # CRDT topology replication. This engine is the "core" site; the edge
+      # replica below pulls from it and it pulls back, so anti-entropy runs in
+      # both directions and neither is authoritative.
+      REPLICA_ENABLED: "true"
+      REPLICA_ID: core-site
+      REPLICA_PEERS: http://resolution-engine-edge:8081
+      REPLICA_SYNC_INTERVAL: 10s
+      REPLICA_RECONCILE_BUDGET: 5s
+      REPLICA_SYNC_TIMEOUT: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [ontology]
+
+  # ---------------------------------------------------------------------------
+  # Edge site: a second engine replica, to demonstrate CRDT convergence
+  # ---------------------------------------------------------------------------
+  #
+  # The same image and the same code as the core engine. What makes it an "edge
+  # site" is only its configuration: a distinct REPLICA_ID, a different consumer
+  # group so it sees the same telemetry rather than splitting the partitions
+  # with the core, and GRAPH_PROVIDER=mock so it resolves topology from local
+  # fixtures instead of reaching the shared Neo4j.
+  #
+  # That last one is the point of the exercise. This site has no route to the
+  # central topology store, which is exactly the condition an aircraft between
+  # uplinks or an isolated plant network is in, and it keeps resolving and
+  # emitting throughout. `make replica-split` severs the sync path and `make
+  # replica-heal` restores it; convergence is observable as the two sites
+  # reporting the same graph_revision.
+  resolution-engine-edge:
+    build:
+      context: ./services/resolution-engine
+      args:
+        VERSION: ${OO_VERSION:-1.0.0}
+    container_name: oo-resolution-engine-edge
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "8084:8081"
+    environment:
+      KAFKA_BROKERS: kafka:29092
+      # A distinct group: this replica observes the same telemetry as the core
+      # rather than taking half its partitions. Sharing the group would make the
+      # two sites see disjoint assets, which is a sharded fleet, not a
+      # replicated one.
+      KAFKA_CONSUMER_GROUP: ontology-resolution-engine-edge
+      KAFKA_SOURCE_TOPIC: telemetry.raw
+      # The edge site does not publish mutations. It exists to hold and
+      # replicate topology; two engines publishing the same alarm to the same
+      # topic would double every command the closure loop issues.
+      KAFKA_MUTATION_TOPIC: ontology.mutations.edge
+      KAFKA_DLQ_TOPIC: telemetry.dlq
+      REDIS_ADDR: redis:6379
+      # A separate Redis database, so the edge site's twin state is genuinely
+      # its own and cannot be mistaken for the core's.
+      REDIS_DB: "1"
+      TWIN_STATE_TTL: 24h
+      ENGINE_WORKERS: "2"
+      ENGINE_OP_TIMEOUT: 5s
+      RULE_VIBRATION_INDEX_MAX: "8.5"
+      RULE_TEMPERATURE_CELSIUS_MAX: "110.0"
+      RULE_REALERT_INTERVAL: 5m
+      RULE_HYSTERESIS_RATIO: "0.05"
+      RULE_CRITICAL_RATIO: "0.15"
+      # Fixture-backed: no route to the shared topology store, by design.
+      GRAPH_PROVIDER: mock
+      GRAPH_CACHE_TTL: 5m
+      GRAPH_QUERY_BUDGET: 3s
+      GRAPH_SIMULATED_LATENCY: 12ms
+      HTTP_ADDR: ":8081"
+      LOG_LEVEL: info
+      IDEMPOTENCY_ENABLED: "true"
+      IDEMPOTENCY_TTL: 5s
+      IDEMPOTENCY_SCOPE: asset_sensor
+      IDEMPOTENCY_KEY_PREFIX: "dedupe-edge:"
+      IDEMPOTENCY_FAIL_OPEN: "true"
+      REPLICA_ENABLED: "true"
+      REPLICA_ID: edge-site
+      REPLICA_PEERS: http://resolution-engine:8081
+      REPLICA_SYNC_INTERVAL: 10s
+      REPLICA_RECONCILE_BUDGET: 5s
+      REPLICA_SYNC_TIMEOUT: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [ontology]
+
+  # ---------------------------------------------------------------------------
+  # Commercial layer: FastAPI AI-agent interceptor
+  # ---------------------------------------------------------------------------
+  ai-interceptor:
+    build:
+      context: ./services/ai-interceptor
+    container_name: oo-ai-interceptor
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      OO_ENVIRONMENT: docker
+      OO_LOG_LEVEL: INFO
+      OO_LICENSE_HEADER: X-License-Key
+      # Shared correctness state. The image runs four uvicorn workers, so the
+      # quota window and the (tenant, event_id) idempotency record must live
+      # outside any one process. Same Redis as the engine; the key prefixes are
+      # namespaced away from twin:/twinindex:/twinalarm:/dedupe:.
+      OO_REDIS_URL: redis://redis:6379/0
+      OO_REQUIRE_SHARED_STATE: "true"
+      OO_QUOTA_KEY_PREFIX: "quota:"
+      OO_PLAN_KEY_PREFIX: "plan:"
+      OO_IDEMPOTENCY_TTL_SECONDS: "86400"
+      # Metering is availability first, idempotency is safety first.
+      OO_RATE_LIMIT_FAIL_OPEN: "true"
+      OO_IDEMPOTENCY_FAIL_OPEN: "false"
+      # The planner wants a tool-calling LLM API and nothing more specific than
+      # that; which provider serves it is a config choice. "mock" is the
+      # deterministic in-process planner and keeps the whole topology offline —
+      # no network, no key, no SDK. Set OO_LLM_PROVIDER=cloud, name a model your
+      # provider serves in OO_LLM_MODEL and supply OO_LLM_API_KEY to plan
+      # against a live one.
+      OO_LLM_PROVIDER: ${OO_LLM_PROVIDER:-mock}
+      # The offline planner's own id, matching the service default. In cloud
+      # mode this must be overridden with a real model id — the service refuses
+      # to start rather than guess one.
+      OO_LLM_MODEL: ${OO_LLM_MODEL:-openontology-mock-planner}
+      OO_LLM_EFFORT: ${OO_LLM_EFFORT:-medium}
+      OO_LLM_MAX_TOKENS: "4096"
+      OO_LLM_SIMULATED_LATENCY_MS: "40"
+      OO_LLM_API_KEY: ${OO_LLM_API_KEY:-}
+      OO_MAX_COMMANDS: "6"
+      OO_IDEMPOTENCY_CACHE_SIZE: "512"
+      OO_DOCS_ENABLED: "true"
+    tmpfs:
+      # prometheus_client's multiprocess mode. These are per-worker mmap files
+      # that must not survive a restart — stale ones are indistinguishable from
+      # a live worker's and would be summed into the totals. A tmpfs guarantees
+      # that; the entrypoint clears the directory as well, for the case where
+      # someone runs the image without this mount.
+      - /tmp/prometheus_multiproc:uid=10001,gid=10001,mode=0700
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [ontology]
+
+  # ---------------------------------------------------------------------------
+  # Commercial layer: semantic GraphRAG two-agent interceptor
+  # ---------------------------------------------------------------------------
+  #
+  # The ENTERPRISE-tier planner. Where ai-interceptor answers "what should be
+  # done about this alarm", this answers the prior question — "which physical
+  # node is actually at fault" — by running a deterministic topology kernel over
+  # the flow network and CRDT state in mutation.v2, then two agents over a
+  # maintenance corpus retrieved under the kernel's verdict.
+  #
+  # It speaks the same contract as ai-interceptor: mutation in, command sequence
+  # out. That is what lets the closure loop route by tier without learning a
+  # second protocol, and it is the same substitutability docs/OPEN-CORE.md
+  # promises anyone reimplementing the paid layer.
+  graphrag-interceptor:
+    build:
+      context: ./services/graphrag-interceptor
+    container_name: oo-graphrag-interceptor
+    ports:
+      - "8010:8010"
+    environment:
+      OO_GRAPHRAG_ENVIRONMENT: docker
+      OO_GRAPHRAG_LOG_LEVEL: INFO
+      OO_GRAPHRAG_DOCS_ENABLED: "true"
+      # deterministic : the offline two-agent loop, no network and no API key
+      # cloud         : live provider calls for both agents
+      #
+      # Configured independently of the standard interceptor above: the two
+      # tiers can run on different providers, or one live and one offline.
+      OO_GRAPHRAG_AGENT_PROVIDER: ${OO_GRAPHRAG_AGENT_PROVIDER:-deterministic}
+      OO_GRAPHRAG_AGENT_MODEL: ${OO_GRAPHRAG_AGENT_MODEL:-openontology-rule-engine}
+      OO_GRAPHRAG_AGENT_API_KEY: ${OO_GRAPHRAG_AGENT_API_KEY:-}
+      OO_GRAPHRAG_SIMULATED_LATENCY_MS: "25"
+      # One billing export feeds every service. Unset here, each layer falls
+      # back to its own demo keys; set it once and all three agree on who has
+      # paid for what.
+      OO_LICENSE_REGISTRY_PATH: ${OO_LICENSE_REGISTRY_PATH:-}
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [ontology]
+
+  # ---------------------------------------------------------------------------
+  # Closure loop: Kafka command worker (ontology.mutations -> ontology.commands)
+  # ---------------------------------------------------------------------------
+  command-worker:
+    build:
+      context: ./services/command-worker
+    container_name: oo-command-worker
+    depends_on:
+      kafka:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+      # service_started, not service_healthy: ordering only. Readiness is the
+      # worker's own preflight, which retries a still-booting interceptor and
+      # reports the outcome on /readyz. Waiting on the health gate as well would
+      # make the stub mode — which needs no interceptor at all — depend on one.
+      ai-interceptor:
+        condition: service_started
+      graphrag-interceptor:
+        condition: service_started
+    ports:
+      - "8082:8082"
+    environment:
+      OO_ENVIRONMENT: docker
+      OO_LOG_LEVEL: INFO
+      OO_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      OO_MUTATIONS_TOPIC: ontology.mutations
+      OO_COMMANDS_TOPIC: ontology.commands
+      OO_COMMANDS_DLQ_TOPIC: ontology.commands.dlq
+      OO_CONSUMER_GROUP: ontology-command-worker
+      OO_CONSUMER_WORKERS: "2"
+      # The subscription this worker runs under. Engine-produced records carry
+      # no credential of their own, so the gatekeeper falls back to this key.
+      OO_LICENSE_KEY: ${OO_COMMAND_LICENSE_KEY:-oo-live-standard-demo-key}
+      # One vocabulary across both services: the interceptor's tiers
+      # (ENTERPRISE / STANDARD / COMMUNITY). The worker also still resolves the
+      # older SMALL_BUSINESS spelling of STANDARD, so an existing deployment's
+      # configuration keeps working across the rename.
+      OO_ALLOWED_PLANS: STANDARD,ENTERPRISE
+      # "http" is the product: mutations are planned by the commercial
+      # interceptor over HTTP. "stub" swaps in the in-process simulator, which
+      # needs no interceptor and no network — set OO_INTERCEPTOR_MODE=stub for
+      # offline work.
+      OO_INTERCEPTOR_MODE: ${OO_INTERCEPTOR_MODE:-http}
+      OO_INTERCEPTOR_URL: http://ai-interceptor:8000
+      OO_INTERCEPTOR_PATH: /v1/intercept
+      OO_INTERCEPTOR_LICENSE_PATH: /v1/license
+      # Tier routing, and the sharpest edge of the open-core boundary: the
+      # GraphRAG planner is ENTERPRISE-only. A STANDARD subscription keeps the
+      # standard interceptor; presenting the ENTERPRISE key routes the same
+      # mutation to the two-agent layer instead. Both speak one contract, so
+      # this is a URL swap rather than a second code path.
+      OO_ENTERPRISE_INTERCEPTOR_URL: http://graphrag-interceptor:8010
+      OO_ENTERPRISE_INTERCEPTOR_TIERS: ENTERPRISE
+      OO_ENTERPRISE_LICENSE_KEY: ${OO_GRAPHRAG_LICENSE_KEY:-oo-live-graphrag-enterprise-key}
+      # Prove at boot that both services resolve OO_LICENSE_KEY to the same
+      # tenant and tier, before a single mutation is planned. Strict mode parks
+      # the consumers on disagreement instead of draining anyway.
+      OO_INTERCEPTOR_PREFLIGHT: "true"
+      OO_INTERCEPTOR_PREFLIGHT_STRICT: "false"
+      # Backpressure. MAX_RPM=0 means "learn it": the preflight reads
+      # quota_per_minute off /v1/license and paces to RATE_MARGIN of it, so the
+      # worker stops manufacturing the 429s it would then have to retry. The
+      # STANDARD key above is 60/min; the ENTERPRISE key is 600/min, and the
+      # pacing follows whichever is presented without a redeploy.
+      OO_INTERCEPTOR_MAX_RPM: ${OO_INTERCEPTOR_MAX_RPM:-0}
+      OO_INTERCEPTOR_RATE_MARGIN: "0.9"
+      OO_INTERCEPTOR_MAX_CONCURRENCY: "8"
+      # Read budget deliberately exceeds the interceptor's own LLM timeout so a
+      # slow plan surfaces as its classifiable 502, not an opaque client hang.
+      OO_INTERCEPTOR_TIMEOUT_SECONDS: "35"
+      OO_INTERCEPTOR_CONNECT_TIMEOUT_SECONDS: "5"
+      OO_INTERCEPTOR_RETRY_AFTER_CAP_SECONDS: "30"
+      OO_TRANSIENT_BACKOFF_MAX_SECONDS: "30"
+      OO_MAX_COMMANDS: "6"
+      OO_DOCS_ENABLED: "true"
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [ontology]
+
+  # ---------------------------------------------------------------------------
+  # Operator surface: read-only live view
+  # ---------------------------------------------------------------------------
+  operator-console:
+    build:
+      context: ./services/operator-console
+    container_name: oo-operator-console
+    depends_on:
+      kafka:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "8083:8083"
+    environment:
+      OO_LOG_LEVEL: INFO
+      OO_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+      OO_MUTATIONS_TOPIC: ontology.mutations
+      OO_COMMANDS_TOPIC: ontology.commands
+      # Read-only against the engine's keyspace: twin:, twinindex:, twinalarm:.
+      # This service never writes a key and joins no consumer group, so it
+      # cannot affect ingestion or the closure loop's lag.
+      OO_REDIS_URL: redis://redis:6379/0
+      OO_CONSOLE_HISTORY: "200"
+      OO_CONSOLE_STREAM_INTERVAL: "2.0"
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [ontology]
+
+  # ---------------------------------------------------------------------------
+  # Observability
+  # ---------------------------------------------------------------------------
+  kafka-exporter:
+    image: danielqsj/kafka-exporter:v1.7.0
+    container_name: oo-kafka-exporter
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command:
+      - --kafka.server=kafka:29092
+      # Consumer-group lag is the reason this exists alongside the services'
+      # own counters: it is a property of the broker, so it stays true across a
+      # service restart and covers groups nobody instrumented.
+      - --group.filter=.*
+      - --topic.filter=.*
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [ontology]
+
+  prometheus:
+    # Built rather than pulled: the scrape config is copied into the image.
+    # See ops/prometheus/Dockerfile — a bind mount fails on checkouts under a
+    # synced directory, which is the same reason the neo4j seeder bakes its
+    # revisions in.
+    build:
+      context: ./ops/prometheus
+    container_name: oo-prometheus
+    depends_on:
+      kafka-exporter:
+        condition: service_started
+    ports:
+      - "9090:9090"
+    volumes:
+      - prometheus-data:/prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # A demonstration topology does not need months of history, and a small
+      # retention keeps the volume from growing unbounded on a laptop.
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [ontology]
+
+  grafana:
+    # Built rather than pulled, for the same reason as prometheus above: the
+    # datasource, dashboard provider and dashboard JSON are baked in so `make
+    # up` lands on a working dashboard rather than an empty Grafana.
+    build:
+      context: ./ops/grafana
+    container_name: oo-grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      # Anonymous viewer access. This is a local demonstration surface and a
+      # login prompt between `make up` and seeing the pipeline work is friction
+      # with no security value here — the dashboard is read-only and every
+      # target it reads is already unauthenticated. SECURITY.md says plainly
+      # that none of these ports should be exposed publicly.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_USERS_DEFAULT_THEME: dark
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      # Land on the pipeline dashboard rather than an empty home page.
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/openontology-overview.json
+    volumes:
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+    restart: unless-stopped
+    logging: *default-logging
+    networks: [ontology]
+
+networks:
+  ontology:
+    name: openontology
+
+volumes:
+  prometheus-data:
+  grafana-data:
+  zookeeper-data:
+  zookeeper-log:
+  kafka-data:
+  redis-data:
+  neo4j-data:
+  neo4j-logs:

@@ -1,0 +1,306 @@
+name: CI
+
+# Actions are pinned to a commit SHA, not a tag. A tag is a mutable pointer: a
+# compromised or retagged action would run inside a job that has a checkout of
+# this repository and a writable token. The version comment after each SHA is
+# what humans read; renovate/dependabot update both together.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # A superseded push has nothing left to prove; cancel it rather than paying
+  # for a compose smoke run whose result nobody will read.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Open core: the Go ontology resolution engine
+  # ---------------------------------------------------------------------------
+  go:
+    name: Go engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/resolution-engine
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # The toolchain line in go.mod is the single source of truth; a
+          # version pinned here as well would drift from it silently.
+          go-version-file: services/resolution-engine/go.mod
+          # setup-go caches the module and build caches keyed on this file.
+          cache-dependency-path: services/resolution-engine/go.sum
+
+      - name: gofmt
+        run: |
+          unformatted="$(gofmt -l .)"
+          if [ -n "$unformatted" ]; then
+            echo "::error::gofmt reported unformatted files; run 'make fmt'"
+            echo "$unformatted"
+            gofmt -d .
+            exit 1
+          fi
+          echo "gofmt clean"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go build
+        run: go build ./...
+
+      # -race is the reason this job exists at all: the engine shards its alarm
+      # state 64 ways and shares one Redis pool across every consumer worker, so
+      # a data race is a plausible failure mode rather than a theoretical one.
+      - name: go test -race
+        run: go test -race ./...
+
+  # ---------------------------------------------------------------------------
+  # Commercial layer: the FastAPI interceptor
+  # ---------------------------------------------------------------------------
+  python-interceptor:
+    name: Python interceptor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/ai-interceptor
+
+    services:
+      # A real server, not a fake: the sliding window's correctness is a
+      # property of the Lua script executing atomically inside Redis, and a
+      # Python reimplementation of it would only ever test itself.
+      redis:
+        image: redis:7.2-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/ai-interceptor/requirements-dev.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements-dev.txt
+
+      - name: pytest
+        env:
+          OO_TEST_REDIS_URL: redis://localhost:6379/0
+          # Without this the shared-state tests skip themselves when Redis is
+          # missing, and a broken service block would report green.
+          OO_TEST_REQUIRE_REDIS: "1"
+        run: python -m pytest tests -q
+
+      # schemas/ is generated from these models. Regenerating and diffing is the
+      # only thing that stops a model change silently invalidating the published
+      # contract; the engine's schema_conformance_test.go closes the other
+      # direction, where the Go producer drifts from the schema.
+      - name: Published schemas are current
+        working-directory: .
+        run: python tools/export_schemas.py --check
+
+  # ---------------------------------------------------------------------------
+  # Closure loop: the Kafka command worker
+  # ---------------------------------------------------------------------------
+  python-command-worker:
+    name: Python command worker
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/command-worker
+    env:
+      # smoke_test.py imports the module, and command_worker.py builds its app
+      # at import time from the ambient environment. Every check inside builds
+      # its own Settings; these two only have to make the import succeed.
+      OO_INTERCEPTOR_MODE: stub
+      OO_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/command-worker/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: pytest
+        run: python -m pytest smoke_test.py -q
+
+      # smoke_test.py is a script first and a pytest module second: its check()
+      # helper collects failures into a list and reports them from main() rather
+      # than raising. Under pytest alone every test_ function therefore returns
+      # cleanly whatever the checks found, so the script's own exit code is the
+      # assertion that actually holds. Both are run: pytest catches import and
+      # collection breakage, the script catches failing checks.
+      - name: smoke checks
+        run: python smoke_test.py
+
+  # ---------------------------------------------------------------------------
+  # Commercial layer: the semantic GraphRAG interceptor
+  # ---------------------------------------------------------------------------
+  python-graphrag:
+    name: Python GraphRAG interceptor
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: services/graphrag-interceptor
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: services/graphrag-interceptor/requirements.txt
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt httpx pytest
+
+      # The deterministic agent client is the default, but it is pinned here as
+      # well: a runner with the cloud provider configured would otherwise make
+      # paid network calls from CI.
+      - name: pytest
+        env:
+          OO_GRAPHRAG_AGENT_PROVIDER: deterministic
+        run: python -m pytest tests -q
+
+  # ---------------------------------------------------------------------------
+  # The open-core claim, enforced rather than asserted
+  # ---------------------------------------------------------------------------
+  open-core-boundary:
+    name: Open-core boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: services/resolution-engine/go.mod
+          cache-dependency-path: services/resolution-engine/go.sum
+
+      # docs/OPEN-CORE.md claims the Apache-2.0 half never imports the BUSL-1.1
+      # half and builds without it. An unenforced claim like that decays the
+      # first time someone adds a convenient import, so the check is to delete
+      # the commercial services outright and require everything else to still
+      # build and pass.
+      - name: Delete the commercial layer
+        run: |
+          rm -rf services/ai-interceptor services/graphrag-interceptor
+          echo "remaining services:"
+          ls services/
+          test ! -d services/graphrag-interceptor
+
+      - name: Open core still builds
+        working-directory: services/resolution-engine
+        run: go build ./...
+
+      - name: Open core still passes its tests
+        working-directory: services/resolution-engine
+        run: go test ./...
+
+      # The invariant is "no import", not "no mention". A hostname default of
+      # http://ai-interceptor:8000 is the network boundary working as designed;
+      # `from app.security import ...` inside the worker would be the boundary
+      # being crossed. This names the offending line, which a build failure in
+      # the step above does not.
+      - name: The open core does not import the commercial layer
+        run: |
+          violations=$(grep -rnE \
+            "^[[:space:]]*(from[[:space:]]+app[[:space:].]|import[[:space:]]+app([[:space:].]|$)|sys\.path.*(ai-interceptor|graphrag-interceptor))" \
+            --include='*.py' \
+            services/command-worker services/operator-console 2>/dev/null || true)
+          if [ -n "$violations" ]; then
+            echo "::error::the open core imports the commercial layer"
+            echo "$violations"
+            exit 1
+          fi
+          echo "no import of the commercial layer found"
+
+      # tools/export_schemas.py deliberately does import the interceptor's
+      # models — it is a dev-time generator, not part of the open-core runtime,
+      # and the two steps above are what prove the runtime itself is clean.
+      - name: The command worker still runs without the commercial layer
+        working-directory: services/command-worker
+        env:
+          OO_INTERCEPTOR_MODE: stub
+          OO_KAFKA_BOOTSTRAP_SERVERS: kafka:29092
+        run: |
+          pip install -q -r requirements.txt
+          python smoke_test.py
+
+  # ---------------------------------------------------------------------------
+  # The whole topology, end to end
+  # ---------------------------------------------------------------------------
+  compose-smoke:
+    name: Compose smoke
+    runs-on: ubuntu-latest
+    # The long pole: pulling Kafka, ZooKeeper and Neo4j dominates, and the two
+    # service images are built from scratch. Budgeted generously so a slow
+    # runner reports a real failure rather than a timeout.
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Configure environment
+        run: cp .env.example .env
+
+      - name: Build and start the topology
+        run: make up
+
+      - name: Wait for every service to report ready
+        run: make wait-health
+
+      - name: Seed telemetry
+        run: make seed
+
+      # The actual assertion the job exists for: telemetry entered at one end
+      # and both output topics carry records, which means the engine resolved
+      # and emitted, and the command worker consumed and published.
+      - name: Assert both output topics received records
+        run: make assert-topics
+
+      # Part A's guarantee, enforced rather than described: the interceptor
+      # image runs four uvicorn workers, and the 60 rpm subscription must still
+      # be worth exactly 60 requests a minute in total.
+      - name: Assert the licence quota holds across all workers
+        run: make quota
+
+      - name: Service logs
+        if: failure()
+        run: docker compose logs --no-color --tail 200
+
+      - name: Tear down
+        if: always()
+        run: make clean
