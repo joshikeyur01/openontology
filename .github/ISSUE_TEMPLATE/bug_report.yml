@@ -1,0 +1,78 @@
+name: Bug report
+description: Something behaves differently from how it is documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not report security vulnerabilities here — see
+        [SECURITY.md](../blob/main/SECURITY.md) for private disclosure.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - resolution-engine (Go)
+        - ai-interceptor (FastAPI)
+        - command-worker
+        - operator-console
+        - graph / Neo4j tier
+        - observability (Prometheus / Grafana)
+        - compose topology / Makefile
+        - docs
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead
+      description: Include the error, and the relevant `docker compose logs <service>` output.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: |
+        Ideally from a cold clone. If it reproduces with `make up && make seed`,
+        say so — that is the most useful possible answer.
+      placeholder: |
+        1. cp .env.example .env
+        2. make up && make wait-health
+        3. make seed
+        4. make commands  -> empty
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS and architecture, `docker compose version`, and any non-default values in your `.env`.
+      placeholder: |
+        macOS 15.5 arm64
+        Docker Compose v2.29.1
+        .env: GRAPH_PROVIDER=mock, OO_INTERCEPTOR_MODE=stub
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Service state
+      description: |
+        Output of `make health` and `make closure` if the topology was up. These
+        report readiness, which state backend is live, and the preflight result,
+        which together explain most reported problems.
+      render: shell

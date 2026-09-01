@@ -1,0 +1,56 @@
+name: Feature request
+description: Propose a change or an addition
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        For anything larger than a bug fix, please open this before writing the
+        code — design discussion is cheaper than a rejected pull request.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What are you unable to do today? Describe the situation, not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you propose
+    validations:
+      required: true
+
+  - type: dropdown
+    id: side
+    attributes:
+      label: Which half does this land in?
+      description: |
+        The repository is open core. `services/ai-interceptor` and
+        `services/graphrag-interceptor` are BUSL-1.1; everything else is
+        Apache-2.0. See docs/OPEN-CORE.md.
+      options:
+        - Open core (Apache-2.0)
+        - Commercial layer (BUSL-1.1)
+        - Both / crosses the seam
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Contract impact
+      description: |
+        Does this change `openontology.mutation.v1` or
+        `openontology.command-sequence.v1`? Additive optional fields keep the
+        version; anything removed, renamed or changed in meaning needs a new one
+        and a period where both are accepted.
+      placeholder: No schema change / adds an optional field / needs mutation.v3
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered

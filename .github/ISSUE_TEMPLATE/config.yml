@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/joshikeyur01/openontology/security/advisories/new
+    about: Report privately. Do not open a public issue — see SECURITY.md.
+  - name: Question about running it
+    url: https://github.com/joshikeyur01/openontology/blob/main/docs/QUICKSTART.md
+    about: The quickstart covers setup and has a troubleshooting section.
+  - name: Commercial licensing
+    url: mailto:keyurjoshi2104@gmail.com
+    about: Alternative licensing for the BUSL-1.1 components.
